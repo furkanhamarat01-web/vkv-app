@@ -1,0 +1,7 @@
+Bu ileti, Windows'un dosyayi engelledigi anlamina gelir. Uygulama henuz acilmamistir.
+
+1. Klasoru ZIP icinden veya Mac klasorunden calistirmayin.
+2. VKV Is Takip klasorunun tamamini Windows masaustune kopyalayin.
+3. VKV Is Takip.exe dosyasina sag tiklayin, Ozellikler deyin.
+4. En altta Engellemeyi kaldir varsa isaretleyip Tamam deyin.
+5. EXE'ye cift tiklayin. Ayni ileti gelirse Calistir.vbs dosyasina cift tiklayin.

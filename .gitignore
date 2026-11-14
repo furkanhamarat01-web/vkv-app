@@ -1,0 +1,17 @@
+# Masaüstündeki kişisel dosyalar depoya girmez.
+/*
+!.gitignore
+!is_merkezi.py
+!Baslat.command
+!KULLANIM.md
+!VKV Is Takip.bat
+!İş Merkezi.app/
+!VKV Ag/
+!VKV Talep/
+!VKV Is Takip/
+
+__pycache__/
+*.pyc
+.DS_Store
+github-recovery-codes.txt
+VKV Is Takip/Veriler/

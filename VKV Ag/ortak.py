@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 PORT = 8780
+PUBLIC_SERVER = "http://hqb6bmzszcsc4t470l10npd5.185.184.210.52.sslip.io"
 APP = "VKV Ağ"
 FONT = ".AppleSystemUIFont" if sys.platform == "darwin" else "Segoe UI"
 MAX_FILE = 20 * 1024 * 1024
@@ -120,6 +121,19 @@ def lan_ips():
     if probe and not probe.startswith("127.") and probe not in found:
         found.insert(0, probe)
     return found
+
+
+def api_base(value):
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        raise ValueError("Sunucu adresi yaz.")
+    if "://" in raw:
+        scheme, rest = raw.split("://", 1)
+        if scheme not in ("http", "https") or not rest or any(ch.isspace() for ch in rest):
+            raise ValueError("Sunucu adresi geçersiz.")
+        return f"{scheme}://{rest}"
+    host, port = parse_address(raw)
+    return f"http://{host}:{port}"
 
 
 def parse_address(value):

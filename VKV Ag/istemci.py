@@ -16,8 +16,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from ortak import (
-    APP, FONT, FILE_EXT, MAX_FILE, ROLES, STATUSES,
-    device_snapshot, file_size, istemci_dir, parse_address, safe_filename,
+    APP, FONT, FILE_EXT, MAX_FILE, PUBLIC_SERVER, ROLES, STATUSES,
+    api_base, device_snapshot, file_size, istemci_dir, safe_filename,
 )
 
 NAV = "#1D2438"
@@ -46,8 +46,7 @@ class Api:
         self.client_id = ""
 
     def set_base(self, text):
-        host, port = parse_address(text)
-        self.base = f"http://{host}:{port}"
+        self.base = api_base(text)
 
     def durum(self):
         return self._request("/v1/durum", auth=False)
@@ -242,8 +241,10 @@ class AgApp(tk.Tk):
             child.destroy()
 
     def _boot(self):
-        address = self.config_data.get("sunucu") or "127.0.0.1:8780"
-        self._connect_screen(address, bool(self.config_data.get("sunucu")))
+        saved = (self.config_data.get("sunucu") or "").strip().rstrip("/")
+        if saved in ("", "127.0.0.1:8780", "http://127.0.0.1:8780"):
+            saved = PUBLIC_SERVER
+        self._connect_screen(saved, True)
 
     def _connect_screen(self, address, auto):
         self._clear()
@@ -253,7 +254,7 @@ class AgApp(tk.Tk):
         )
         tk.Label(card, text="Sunucu adresi", bg=CARD, fg=MUTED, font=(FONT, 11, "bold")).pack(anchor="w", pady=(8, 2))
         self.address = tk.StringVar(value=address)
-        tk.Entry(card, textvariable=self.address, relief="flat", highlightthickness=1, highlightbackground=LINE, font=(FONT, 13), width=36).pack(fill="x", ipady=6)
+        tk.Entry(card, textvariable=self.address, relief="flat", highlightthickness=1, highlightbackground=LINE, font=(FONT, 13), width=62).pack(fill="x", ipady=6)
         Click(card, "Bağlan", self._connect, ACCENT, "white", ACCENT_HOVER).pack(anchor="e", pady=(16, 0))
         if auto:
             self.after(60, self._connect)
@@ -753,7 +754,10 @@ class AgApp(tk.Tk):
 def _self_check():
     import tempfile
     import time
-    from sunucu import Hub, Server
+    backend = Path(__file__).resolve().parents[1] / "vkv-backend"
+    sys.path.insert(0, str(backend))
+    from vkv_backend.http import Server
+    from vkv_backend.hub import Hub
     folder = tempfile.TemporaryDirectory()
     client_root = Path(folder.name) / "istemci"
     client_root.mkdir()

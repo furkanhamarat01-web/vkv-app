@@ -2,6 +2,10 @@
 /*
 !.gitignore
 !is_merkezi.py
+!is-merkezi/
+!is-merkezi/ui/
+!is-merkezi/ui/**
+is-merkezi/backend/
 !Baslat.command
 !KULLANIM.md
 !VKV Is Takip.bat

@@ -1,0 +1,24 @@
+#!/bin/bash
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in
+    /*) ;;
+    *) SOURCE="$DIR/$SOURCE" ;;
+  esac
+done
+MACOS="$(cd "$(dirname "$SOURCE")" && pwd)"
+UI="$(cd "$MACOS/../../../.." && pwd)"
+SUPPORT="$HOME/Library/Application Support/VKVTalep"
+mkdir -p "$SUPPORT"
+LOG="$SUPPORT/launch.log"
+export API_TOKEN="$(cat "$HOME/Library/Application Support/IsMerkezi/api.token" 2>/dev/null)"
+export IS_MERKEZI_API="${IS_MERKEZI_API:-http://hqb6bmzszcsc4t470l10npd5.185.184.210.52.sslip.io}"
+for PY in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$PY" ]; then
+    exec "$PY" "$UI/is_merkezi.py" >>"$LOG" 2>&1
+  fi
+done
+echo "python3 bulunamadı" >>"$LOG"
+exit 1

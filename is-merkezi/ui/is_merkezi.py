@@ -36,6 +36,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import zipfile
+import hesap
 from datetime import date, datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from pathlib import Path
@@ -43,6 +44,8 @@ from xml.etree import ElementTree as ET
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
+
+from is_merkezi_client import ApiError, ApiStore
 
 APP_NAME = "VKV İş Takip Merkezi"
 if sys.platform == "win32":
@@ -7979,122 +7982,52 @@ def _clipboard_png(dest):
 def set_talep_password(user_id, password):
     if len(str(password or "")) < 6:
         return False
-    path = talep_db_path()
-    if not path.is_file():
-        return False
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, 120_000)
-    stored = salt.hex() + ":" + digest.hex()
     try:
-        conn = sqlite3.connect(path, timeout=5)
-    except sqlite3.Error:
-        return False
-    try:
-        conn.execute("UPDATE users SET password=?, must_change=0 WHERE id=?", (stored, int(user_id)))
-        conn.commit()
+        hesap.client().set_password(user_id, password, False)
         return True
-    except sqlite3.Error:
+    except (hesap.ApiError, ValueError):
         return False
-    finally:
-        conn.close()
 
 
 def read_talep_account(user_id):
-    conn = _talep_db()
-    if conn is None:
-        return None
     try:
-        user = conn.execute("SELECT * FROM users WHERE id=?", (int(user_id),)).fetchone()
-        return _account_from_row(conn, user)
-    except (sqlite3.Error, TypeError, ValueError):
+        return hesap.client().account(user_id) or None
+    except hesap.ApiError:
         return None
-    finally:
-        conn.close()
 
 
 def talep_user_count():
-    conn = _talep_db()
-    if conn is None:
-        return 0
     try:
-        return int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
-    except sqlite3.Error:
-        return 0
-    finally:
-        conn.close()
+        return hesap.client().user_count()
+    except hesap.ApiError:
+        return -1
 
 
 def login_talep_account(username, password, code=""):
-    conn = _talep_db()
-    if conn is None:
+    if not str(username or "").strip() or not password:
         return None
     try:
-        key = " ".join(str(username or "").split()).casefold()
-        compact = "".join(ch for ch in key if ch.isalnum() or ch in "._-")
-        if not key or not password:
-            return None
-        for user in conn.execute("SELECT * FROM users").fetchall():
-            email = str(user["email"] or "").casefold()
-            names = {" ".join(str(user["name"] or "").split()).casefold(), email, email.split("@", 1)[0]}
-            handle = ""
-            if "username" in user.keys() and user["username"]:
-                handle = str(user["username"]).casefold()
-                names.add(handle)
-            if key not in names and compact != handle:
-                continue
-            if not _talep_password_ok(password, user["password"]):
-                continue
-            typed = "".join(ch for ch in str(code or "") if ch.isdigit())
-            if typed and not _talep_totp_ok(user["totp_secret"], code):
-                continue
-            return _account_from_row(conn, user)
+        return hesap.client().session(username, password)
+    except (hesap.ApiError, ValueError):
         return None
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
 
 
 def read_talep_teams():
-    conn = _talep_db()
-    if conn is None:
-        return []
     try:
-        return [dict(row) for row in conn.execute("SELECT name, code FROM teams ORDER BY name")]
-    except sqlite3.Error:
+        return [{"name": row["name"], "code": row["code"]} for row in hesap.client().teams()]
+    except hesap.ApiError:
         return []
-    finally:
-        conn.close()
 
 
 def read_talep_codes():
-    conn = _talep_db()
-    if conn is None:
-        return []
     try:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(request_codes)")}
-        scope = "c.scope" if "scope" in columns else "'İç'"
-        shared = "c.all_teams" if "all_teams" in columns else "0"
-        rows = [
-            dict(row)
-            for row in conn.execute(
-                f"""
-                SELECT c.code, c.work_code, c.title, {scope} AS scope, {shared} AS all_teams,
-                       t.name AS team_name, t.code AS team_code
-                FROM request_codes c
-                JOIN teams t ON t.id = c.team_id
-                ORDER BY t.name, c.code
-                """
-            )
-        ]
-        for row in rows:
-            row["scope"] = "Dış" if row.get("scope") == "Dış" else "İç"
-            row["all_teams"] = bool(row.get("all_teams"))
-        return rows
-    except sqlite3.Error:
+        rows = hesap.client().request_codes()
+    except hesap.ApiError:
         return []
-    finally:
-        conn.close()
+    for row in rows:
+        row["scope"] = "Dış" if row.get("scope") == "Dış" else "İç"
+        row["all_teams"] = bool(row.get("all_teams"))
+    return rows
 
 
 def talep_assignment(home_teams, target):
@@ -8108,27 +8041,10 @@ def talep_assignment(home_teams, target):
 
 
 def read_talep_members(team_name):
-    conn = _talep_db()
-    if conn is None:
-        return []
     try:
-        return [
-            {"id": int(row["id"]), "name": row["name"]}
-            for row in conn.execute(
-                """
-                SELECT u.id, u.name FROM users u
-                JOIN members m ON m.user_id = u.id
-                JOIN teams t ON t.id = m.team_id
-                WHERE t.name=?
-                ORDER BY u.name
-                """,
-                (str(team_name or ""),),
-            )
-        ]
-    except sqlite3.Error:
+        return [{"id": int(row["id"]), "name": row["name"]} for row in hesap.client().team_members(team_name)]
+    except hesap.ApiError:
         return []
-    finally:
-        conn.close()
 
 
 class TalepBridge:
@@ -8260,7 +8176,13 @@ class App(tk.Tk):
         self._locked_out = False
         self._mail_busy = False
         self.events = queue.Queue()
-        self.db = Database()
+        try:
+            self.db = ApiStore()
+        except ApiError as exc:
+            messagebox.showerror(APP_NAME, str(exc))
+            self._locked_out = True
+            self.after(50, self.destroy)
+            return
         self._lock_file = open(DATA_DIR / ".lock", "a+b")
         if not try_single_instance(self._lock_file):
             self.db.close()
@@ -8347,6 +8269,10 @@ class App(tk.Tk):
                 reports = NavItem(menu, "Raporlar", lambda: self.show_section("Raporlar"))
                 reports.pack(fill="x")
                 self.nav_buttons["Raporlar"] = reports
+        for name in ("Ekipler", "Talep kodları", "Kullanıcılar", "Giriş kayıtları"):
+            button = NavItem(menu, name, lambda page=name: self.show_section(page))
+            button.pack(fill="x")
+            self.nav_buttons[name] = button
         self.settings_nav = Click(self.sidebar, "Ayarlar", self.open_settings, NAV, NAV_MUTED, NAV_HOVER, font=(FONT, 13), padx=10, pady=6, anchor="w")
         self.settings_nav.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
         self.sidebar_user = tk.Label(self.sidebar, text="", bg=NAV, fg="white", font=(FONT, 12), wraplength=180, justify="left")
@@ -8383,6 +8309,7 @@ class App(tk.Tk):
 
         self.body = tk.Frame(self.main, bg=CANVAS)
         self.body.pack(fill="both", expand=True)
+        self.admin_page = tk.Frame(self.body, bg=CANVAS)
         self._build_board()
         self._build_talepler()
         self._build_invoices()
@@ -9050,7 +8977,13 @@ class App(tk.Tk):
             return
         self.talep_who.configure(text=f"Hesap: {account['name']}  ·  {account['email']}")
         teams = ", ".join(team["name"] for team in account.get("member_teams") or []) or ""
-        self.sidebar_user.configure(text=f"{account['name']}\n{teams}" if teams else account["name"])
+        role = account.get("role") or ""
+        lines = [account["name"]]
+        if role:
+            lines.append(role)
+        if teams:
+            lines.append(teams)
+        self.sidebar_user.configure(text="\n".join(lines))
 
     def _team_names(self, account):
         groups = (account or {}).get("member_teams")
@@ -9069,7 +9002,11 @@ class App(tk.Tk):
             return False
         return str(row["source_name"] or "") in names or str(row["target_name"] or "") in names
 
+    def _allowed_screens(self, account):
+        return set((account or {}).get("screens") or [])
+
     def _apply_nav(self, account):
+        allowed = self._allowed_screens(account)
         for button in self.nav_buttons.values():
             button.pack_forget()
         order = []
@@ -9077,10 +9014,14 @@ class App(tk.Tk):
             order.append(name)
             if name == "Faturalar":
                 order.append("Raporlar")
+        order.extend(("Ekipler", "Talep kodları", "Kullanıcılar", "Giriş kayıtları"))
         for name in order:
-            if name in self.nav_buttons:
+            if name in allowed and name in self.nav_buttons:
                 self.nav_buttons[name].pack(fill="x")
-        self.settings_nav.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+        if "Ayarlar" in allowed:
+            self.settings_nav.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+        else:
+            self.settings_nav.pack_forget()
 
     def _enter_workspace(self):
         screen = getattr(self, "_login_screen", None)
@@ -9098,7 +9039,11 @@ class App(tk.Tk):
         self.expanded_invoice = None
         self.expanded_report = None
         self._apply_nav(account)
-        self.show_section(self.section or "İş takibi")
+        allowed = self._allowed_screens(account)
+        opening = self.section if self.section in allowed else "İş takibi"
+        if opening not in allowed and allowed:
+            opening = next(iter(allowed))
+        self.show_section(opening)
         if self._boot_note and hasattr(self, "status"):
             self.status.configure(text=self._boot_note)
         self._show_talep_account()
@@ -9106,7 +9051,14 @@ class App(tk.Tk):
     def _require_login(self):
         if not self.winfo_exists() or self._locked_out:
             return
-        if self._current_talep_account() or talep_user_count() == 0:
+        count = talep_user_count()
+        if count < 0:
+            messagebox.showerror(APP_NAME, "Sunucuya bağlanılamadı.")
+            return
+        if count == 0:
+            self._show_setup_screen()
+            return
+        if self._current_talep_account():
             self._enter_workspace()
             return
         self._show_login_screen()
@@ -9126,7 +9078,7 @@ class App(tk.Tk):
         tk.Label(card, text="VKV girişi", bg=CARD, fg=INK, font=(FONT, 22, "bold")).pack(anchor="w")
         tk.Label(
             card,
-            text="Kullanıcı adın ve parolan. Parola doğruysa iş ekranı açılır.",
+            text="Kullanıcı adın ve parolan. Rolüne göre ekranlar açılır.",
             bg=CARD, fg=MUTED, font=(FONT, 12), wraplength=380, justify="left",
         ).pack(anchor="w", pady=(6, 8))
         username = tk.StringVar()
@@ -9146,7 +9098,7 @@ class App(tk.Tk):
                 return
             account = login_talep_account(username.get(), password.get())
             if account is None:
-                messagebox.showwarning(APP_NAME, "Kullanıcı adı, parola veya doğrulama kodu hatalı.", parent=self)
+                messagebox.showwarning(APP_NAME, "Kullanıcı adı veya parola hatalı.", parent=self)
                 return
             if account.get("must_change"):
                 self._changing_password = True
@@ -9160,8 +9112,67 @@ class App(tk.Tk):
             self._enter_workspace()
 
         Click(card, "Giriş yap", enter, ACCENT, "white", ACCENT_HOVER, font=(FONT, 13, "bold")).pack(anchor="e", pady=(16, 0))
+        Click(card, "Şifremi unuttum", self._show_forgot_screen, CARD, ACCENT, HOVER, font=(FONT, 12)).pack(anchor="e", pady=(8, 0))
         self.unbind_all("<Return>")
         self.bind_all("<Return>", lambda _e: enter() if getattr(self, "_login_screen", None) is not None and self._login_screen.winfo_exists() else None)
+
+    def _auth_shell(self):
+        self.sidebar.pack_forget()
+        self.main.pack_forget()
+        if getattr(self, "_login_screen", None) is not None and self._login_screen.winfo_exists():
+            self._login_screen.destroy()
+        screen = tk.Frame(self, bg=CANVAS)
+        screen.pack(fill="both", expand=True)
+        self._login_screen = screen
+        card = tk.Frame(screen, bg=CARD, padx=28, pady=24, highlightbackground=LINE, highlightthickness=1)
+        card.pack(expand=True)
+        return card
+
+    def _show_setup_screen(self):
+        card = self._auth_shell()
+        tk.Label(card, text="İlk yönetici", bg=CARD, fg=INK, font=(FONT, 22, "bold")).pack(anchor="w")
+        tk.Label(card, text="Bu hesap Yönetici olur ve bütün ekranları görür.", bg=CARD, fg=MUTED, font=(FONT, 12), wraplength=380, justify="left").pack(anchor="w", pady=(6, 8))
+        name = tk.StringVar()
+        username = tk.StringVar()
+        password = tk.StringVar()
+        again = tk.StringVar()
+        for label, var, secret in (("Ad soyad", name, False), ("Kullanıcı adı", username, False), ("Parola", password, True), ("Parola tekrar", again, True)):
+            tk.Label(card, text=label, bg=CARD, fg=MUTED, font=(FONT, 11, "bold")).pack(anchor="w", pady=(8, 2))
+            tk.Entry(card, textvariable=var, relief="flat", highlightthickness=1, highlightbackground=LINE, font=(FONT, 13), show="•" if secret else "", width=36).pack(fill="x", ipady=6)
+
+        def save():
+            if password.get() != again.get():
+                messagebox.showwarning(APP_NAME, "Parolalar aynı değil.", parent=self)
+                return
+            try:
+                account = hesap.client().setup(name.get(), username.get(), password.get())
+            except (hesap.ApiError, ValueError) as exc:
+                messagebox.showwarning(APP_NAME, str(exc), parent=self)
+                return
+            self._save_talep_session(account)
+            self._enter_workspace()
+
+        Click(card, "Hesabı aç", save, ACCENT, "white", ACCENT_HOVER, font=(FONT, 13, "bold")).pack(anchor="e", pady=(16, 0))
+
+    def _show_forgot_screen(self):
+        card = self._auth_shell()
+        tk.Label(card, text="Şifremi unuttum", bg=CARD, fg=INK, font=(FONT, 22, "bold")).pack(anchor="w")
+        tk.Label(card, text="Kullanıcı adını yaz. İstek yöneticiye düşer. Geçici parolayı yönetici verir.", bg=CARD, fg=MUTED, font=(FONT, 12), wraplength=380, justify="left").pack(anchor="w", pady=(6, 8))
+        username = tk.StringVar()
+        tk.Label(card, text="Kullanıcı adı", bg=CARD, fg=MUTED, font=(FONT, 11, "bold")).pack(anchor="w", pady=(8, 2))
+        tk.Entry(card, textvariable=username, relief="flat", highlightthickness=1, highlightbackground=LINE, font=(FONT, 13), width=36).pack(fill="x", ipady=6)
+
+        def send():
+            try:
+                hesap.client().forgot(username.get())
+            except hesap.ApiError as exc:
+                messagebox.showwarning(APP_NAME, str(exc), parent=self)
+                return
+            messagebox.showinfo(APP_NAME, "İstek alındı. Geçici parolayı yöneticinden al.", parent=self)
+            self._show_login_screen()
+
+        Click(card, "İstek gönder", send, ACCENT, "white", ACCENT_HOVER, font=(FONT, 13, "bold")).pack(anchor="e", pady=(16, 0))
+        Click(card, "Girişe dön", self._show_login_screen, CARD, ACCENT, HOVER, font=(FONT, 12)).pack(anchor="e", pady=(8, 0))
 
     def _bind_account_owner(self):
         account = self._current_talep_account()
@@ -9191,10 +9202,7 @@ class App(tk.Tk):
     def _gate_account(self):
         if not self.winfo_exists() or self._locked_out:
             return
-        if talep_user_count() == 0:
-            self._enter_workspace()
-            return
-        self._show_login_screen()
+        self._require_login()
 
     def _ask_talep_login(self, required=False):
         dialog = tk.Toplevel(self)
@@ -9205,7 +9213,7 @@ class App(tk.Tk):
         card = tk.Frame(dialog, bg=CARD, padx=16, pady=14, highlightbackground=LINE, highlightthickness=1)
         card.pack(padx=12, pady=12)
         tk.Label(card, text="VKV girişi", bg=CARD, fg=INK, font=(FONT, 16, "bold")).pack(anchor="w")
-        tk.Label(card, text="Kullanıcı adın ve parolan. Parola doğruysa iş ekranı açılır.", bg=CARD, fg=MUTED, font=(FONT, 12), wraplength=380, justify="left").pack(anchor="w", pady=(4, 8))
+        tk.Label(card, text="Kullanıcı adın ve parolan. Rolüne göre ekranlar açılır.", bg=CARD, fg=MUTED, font=(FONT, 12), wraplength=380, justify="left").pack(anchor="w", pady=(4, 8))
         username = tk.StringVar()
         password = tk.StringVar()
         found = {"account": None}
@@ -9216,7 +9224,7 @@ class App(tk.Tk):
         def enter():
             account = login_talep_account(username.get(), password.get())
             if account is None:
-                messagebox.showwarning(APP_NAME, "Kullanıcı adı, parola veya doğrulama kodu hatalı.", parent=dialog)
+                messagebox.showwarning(APP_NAME, "Kullanıcı adı veya parola hatalı.", parent=dialog)
                 return
             if account.get("must_change") and not self._choose_talep_password(account, dialog):
                 return
@@ -9872,6 +9880,9 @@ class App(tk.Tk):
             self._refresh_talep_badge()
 
     def show_section(self, name):
+        allowed = self._allowed_screens(self._current_talep_account())
+        if allowed and name not in allowed:
+            return
         self.section = name
         self.heading.configure(text=PAGE_TITLES.get(name, name))
         hints = {
@@ -9884,11 +9895,16 @@ class App(tk.Tk):
             "Firmalar": "Yazdığın isim, açık olan Outlook adres defterinde aranır.",
             "Gelir-Gider": "Kayıt aç, fatura ekle. Sonradan kalemle belge ekleyip çıkarabilirsin.",
             "Projeler": "Proje seç, teklif ekle. PDF, e-posta, görüntü, Word ve Excel karşılaştırılır.",
+            "Ekipler": "Ekip adı ve konu. Dış talep kodu konudan üretilir.",
+            "Talep kodları": "Kullanıcının seçtiği talep kodları.",
+            "Kullanıcılar": "Hesap, rol ve parola istekleri.",
+            "Giriş kayıtları": "Giriş, çıkış ve başarısız deneme.",
         }
         self.subhead.configure(text=hints.get(name, ""))
         for key, button in self.nav_buttons.items():
             button.set_active(key == name)
         self.board.pack_forget()
+        self.admin_page.pack_forget()
         self.talep_page.pack_forget()
         self.invoice_page.pack_forget()
         self.report_page.pack_forget()
@@ -9904,6 +9920,10 @@ class App(tk.Tk):
             self.search_box.pack(side="right")
             self.talep_page.pack(fill="both", expand=True)
             self.refresh_talepler()
+        elif name in ("Ekipler", "Talep kodları", "Kullanıcılar", "Giriş kayıtları"):
+            self.admin_page.pack(fill="both", expand=True)
+            import yonetim
+            yonetim.render(self.admin_page, self, name)
         elif name == "Faturalar":
             self.search_box.pack(side="right")
             self.invoice_page.pack(fill="both", expand=True)

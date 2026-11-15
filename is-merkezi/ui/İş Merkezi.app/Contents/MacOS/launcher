@@ -1,0 +1,27 @@
+#!/bin/bash
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in
+    /*) ;;
+    *) SOURCE="$DIR/$SOURCE" ;;
+  esac
+done
+MACOS="$(cd "$(dirname "$SOURCE")" && pwd)"
+UI="$(cd "$MACOS/../../.." && pwd)"
+SUPPORT="$HOME/Library/Application Support/IsMerkezi"
+mkdir -p "$SUPPORT"
+TOKEN_FILE="$SUPPORT/api.token"
+if [ ! -s "$TOKEN_FILE" ]; then
+  /usr/bin/openssl rand -base64 24 | tr -d '\n' > "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+fi
+export API_TOKEN="$(cat "$TOKEN_FILE")"
+export IS_MERKEZI_API="${IS_MERKEZI_API:-http://hqb6bmzszcsc4t470l10npd5.185.184.210.52.sslip.io}"
+for PY in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$PY" ]; then
+    exec "$PY" "$UI/is_merkezi.py"
+  fi
+done
+exit 1

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""VKV Ağ istemcisi. Her bilgisayarda ayrı açılır ve sunucuya bağlanır.
+"""VKV Ağ istemcisi. Her bilgisayarda ayrı açılır ve yayın sunucusuna bağlanır.
 
 İş Merkezi ve Talep kayıtlarına yazmaz. Talep, mesaj ve dosya sunucuda durur.
 Bu bilgisayarın adresi ve oturumu yalnız bu kullanıcı hesabında saklanır.
@@ -128,7 +128,7 @@ class Api:
         for key, value in (headers or {}).items():
             request.add_header(key, value)
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
+            with urllib.request.urlopen(request, timeout=20) as response:
                 body = response.read()
                 if "json" in response.headers.get("Content-Type", ""):
                     parsed = json.loads(body.decode("utf-8"))
@@ -143,6 +143,9 @@ class Api:
                 parsed = {}
             if exc.code == 401:
                 self.token = ""
+                raise ApiError(parsed.get("error") or "Oturum kapandı. Yeniden gir.") from exc
+            if exc.code in (502, 503, 504):
+                raise ApiError("Yayın sunucusu cevap vermiyor.") from exc
             raise ApiError(parsed.get("error") or "İstek olmadı.") from exc
         except urllib.error.URLError as exc:
             raise ApiError("Sunucuya ulaşılamıyor.") from exc
@@ -241,42 +244,35 @@ class AgApp(tk.Tk):
             child.destroy()
 
     def _boot(self):
-        saved = (self.config_data.get("sunucu") or "").strip().rstrip("/")
-        if saved in ("", "127.0.0.1:8780", "http://127.0.0.1:8780"):
-            saved = PUBLIC_SERVER
-        self._connect_screen(saved, True)
-
-    def _connect_screen(self, address, auto):
-        self._clear()
-        card = self._card(
-            "Sunucuya bağlan",
-            "Bu program her bilgisayarda ayrıdır. Yedek sunucudaki adresi yaz. İş Merkezi ve Talep kayıtları burada durmaz.",
-        )
-        tk.Label(card, text="Sunucu adresi", bg=CARD, fg=MUTED, font=(FONT, 11, "bold")).pack(anchor="w", pady=(8, 2))
-        self.address = tk.StringVar(value=address)
-        tk.Entry(card, textvariable=self.address, relief="flat", highlightthickness=1, highlightbackground=LINE, font=(FONT, 13), width=62).pack(fill="x", ipady=6)
-        Click(card, "Bağlan", self._connect, ACCENT, "white", ACCENT_HOVER).pack(anchor="e", pady=(16, 0))
-        if auto:
-            self.after(60, self._connect)
-
-    def _connect(self):
-        try:
-            self.api.set_base(self.address.get())
-        except ValueError as exc:
-            messagebox.showwarning(APP, str(exc), parent=self)
-            return
-        self.config_data["sunucu"] = self.address.get().strip()
+        self.config_data["sunucu"] = PUBLIC_SERVER
         self._save_config()
+        self._open_public()
+
+    def _open_public(self):
+        self._clear()
+        self._card(APP, "Yayın sunucusuna bağlanılıyor.")
+        try:
+            self.api.set_base(PUBLIC_SERVER)
+        except ValueError as exc:
+            self._offline(str(exc))
+            return
 
         def work():
             try:
                 durum = self.api.durum()
             except ApiError as exc:
-                self.after(0, lambda: messagebox.showwarning(APP, str(exc), parent=self))
+                message = str(exc)
+                self.after(0, lambda: self._offline(message))
                 return
             self.after(0, lambda: self._after_connect(durum))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _offline(self, message):
+        self._clear()
+        card = self._card("Sunucuya ulaşılamadı", message)
+        tk.Label(card, text=PUBLIC_SERVER, bg=CARD, fg=MUTED, font=(FONT, 11)).pack(anchor="w")
+        Click(card, "Yeniden dene", self._open_public, ACCENT, "white", ACCENT_HOVER).pack(anchor="e", pady=(16, 0))
 
     def _after_connect(self, durum):
         if durum.get("kurulum"):
@@ -313,7 +309,7 @@ class AgApp(tk.Tk):
 
     def _setup_screen(self):
         self._clear()
-        card = self._card("İlk yönetici", "Sunucu penceresindeki kurulum anahtarını yaz. Bu hesap diğer kişileri ekler.")
+        card = self._card("İlk yönetici", "Yayın sunucusunun kaydındaki kurulum anahtarını yaz. Bu hesap diğer kişileri ekler.")
         key = self._field(card, "Kurulum anahtarı")
         name = self._field(card, "Ad soyad")
         username = self._field(card, "Kullanıcı adı")
@@ -353,7 +349,6 @@ class AgApp(tk.Tk):
             threading.Thread(target=work, daemon=True).start()
 
         Click(card, "Giriş yap", enter, ACCENT, "white", ACCENT_HOVER).pack(anchor="e", pady=(16, 0))
-        Click(card, "Sunucu adresini değiştir", lambda: self._connect_screen(self.config_data.get("sunucu") or "", False), CARD, ACCENT, HOVER).pack(anchor="e", pady=(8, 0))
 
     def _enter(self, user):
         self._generation += 1

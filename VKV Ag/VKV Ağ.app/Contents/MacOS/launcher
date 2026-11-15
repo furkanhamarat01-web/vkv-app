@@ -3,7 +3,8 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT" || exit 1
 for PY in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
   if [ -x "$PY" ]; then
-    exec "$PY" "$ROOT/is_merkezi.py"
+    exec "$PY" "$ROOT/istemci.py"
   fi
 done
+osascript -e 'display alert "VKV Ağ" message "Python 3 bulunamadı."'
 exit 1
